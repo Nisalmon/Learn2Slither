@@ -1,5 +1,8 @@
 import pygame as pg
 import random
+from agent import Agent
+import sys
+from tqdm import tqdm
 
 
 class Snake:
@@ -9,6 +12,7 @@ class Snake:
         self.head_x = None
         self.head_y = None
         self.alive = True
+        self.win = False
 
     def _set_body(self):
         segments = 2
@@ -28,25 +32,43 @@ class Snake:
                 x, y = x, y + 1
 
     def move(self, dir):
+        reward = -0.01
+        new_x = self.head_x + dir[0]
+        new_y = self.head_y + dir[1]
+        if (new_x, new_y) in self.body:
+            self.alive = False
+            return -10
+        if (
+            new_x < 0
+            or new_x >= len(board[0])
+            or new_y < 0
+            or new_y >= len(board)
+        ):
+            self.alive = False
+            return -10
         previous_loc = self.head
-        self.head_x += dir[0]
-        self.head_y += dir[1]
-        self.head = (self.head_x, self.head_y)
+        self.head_x = new_x
+        self.head_y = new_y
+        self.head = (new_x, new_y)
         self.check_wall()
         if self.alive:
             if board[self.head_y][self.head_x] == "G":
                 self.grow(previous_loc)
                 place_apple("G")
-                return
+                reward = 10
+                return reward
             if board[self.head_y][self.head_x] == "R":
                 self.shrink()
                 place_apple("R")
+                reward = -5
         for i in range(len(self.body)):
             tmp = self.body[i]
             self.body[i] = previous_loc
             previous_loc = tmp
         self.check_in_body()
-        print(self.alive)
+        if not self.alive:
+            reward = -10
+        return reward
 
     def grow(self, loc):
         self.body.insert(0, loc)
@@ -67,7 +89,7 @@ class Snake:
             self.alive = False
 
     def check_win(self):
-        return len(self.body) >= len(board) * len(board[0]) - 1        
+        return len(self.body) >= 9      
 
 
 def setup():
@@ -84,22 +106,61 @@ def stop_loop(event, running):
     return running
 
 
-def loop(screen, clock, running, snake):
-    while running:
+def loop(screen, clock, running, snake, agent, max_session):
+    session = 1
+    score = 0
+    max_length = 0
+    all_length = []
+    reached_10 = []
+    all_life = []
+    moved = 0
+    while running and session <= max_session:
         events = pg.event.get()
         screen.fill("gray")
         for event in events:
             running = stop_loop(event, running)
-            check_move(event, snake)
+        state = agent.state
+        action_name = agent.choose_action()
+        action = agent.actions[action_name]
+        reward = snake.move(action)
         update_board(snake)
-        draw_grid(screen)
+        moved += 1
+        if snake.alive:
+            agent.get_vision(board)
+            agent.get_state()
+            next_state = agent.state
+        else:
+            next_state = None
         if snake.check_win():
-            print("Win")
-            running = False
-        if not snake.alive:
-            snake = restart()
+            snake.win = True
+            reward = 100
+        agent.update_q_value(
+            state, action_name,
+            reward, next_state
+        )
+        score += reward
+        max_length = max(max_length, len(snake.body) + 1)
+        draw_grid(screen)
+        if not snake.alive or snake.win:
+            all_length.append(max_length)
+            reached_10.append(1 if max_length >= 10 else 0)
+            all_life.append(moved)
+            snake = restart(agent)
+            agent.epsilon = max(0.01, agent.epsilon * 0.999)
+            agent.get_vision(board)
+            agent.get_state()
+            moved = 0
+            session += 1
+            score = 0
+            max_length = 0
         pg.display.flip()
         clock.tick(60)
+    print(f"Model: {max_session} sessions")
+    print("-" * 20)
+    print(f"Average length : {(sum(all_length)/len(all_length))}")
+    print(f"Max length     : {max(all_length)}")
+    print(f"Reach 10       : {(sum(reached_10)/len(reached_10))}%")
+    print(f"Average life   : {(sum(all_life)/len(all_life))}")
     pg.quit()
 
 
@@ -196,10 +257,12 @@ def place_apple(apple):
     board[loc[1]][loc[0]] = apple
 
 
-def restart():
+def restart(agent):
     reset_board()
     setup_board()
     snake = setup_snake()
+    agent.snake = snake
+    agent.last_action = None
     return snake
 
 
@@ -212,11 +275,77 @@ def reset_board():
 board = init_board()
 
 
+def train(snake, agent, max_session):
+    session = 1
+    score = 0
+    max_length = 0
+    all_length = []
+    reached_10 = []
+    all_life = []
+    moved = 0
+    max_step = 300
+    pbar = tqdm(total=max_session)
+    while session <= max_session:
+        state = agent.state
+        action_name = agent.choose_action()
+        action = agent.actions[action_name]
+        reward = snake.move(action)
+        update_board(snake)
+        moved += 1
+        print(f"Session {session} | Step {moved}")
+        if snake.alive:
+            agent.get_vision(board)
+            agent.get_state()
+            next_state = agent.state
+        else:
+            next_state = None
+        if snake.check_win():
+            snake.win = True
+            reward = 100
+        agent.update_q_value(
+            state, action_name,
+            reward, next_state
+        )
+        score += reward
+        max_length = max(max_length, len(snake.body) + 1)
+        if moved >= max_step:
+            print("AAA")
+            reward = -3
+            snake.alive = False
+        if not snake.alive or snake.win:
+            print("BBB")
+            all_length.append(max_length)
+            reached_10.append(1 if max_length >= 10 else 0)
+            all_life.append(moved)
+            snake = restart(agent)
+            agent.epsilon = max(0.01, agent.epsilon * 0.999)
+            agent.get_vision(board)
+            agent.get_state()
+            moved = 0
+            session += 1
+            score = 0
+            max_length = 0
+            pbar.update(1)
+    pbar.close()
+    print(f"Model: {max_session} sessions")
+    print("-" * 20)
+    print(f"Average length : {(sum(all_length)/len(all_length))}")
+    print(f"Max length     : {max(all_length)}")
+    print(f"Reach 10       : {(sum(reached_10)/len(reached_10))}%")
+    print(f"Average life   : {(sum(all_life)/len(all_life))}")
+
+
 def main():
-    screen, clock, running = setup()
+    # screen, clock, running = setup()
     setup_board()
     snake = setup_snake()
-    loop(screen, clock, running, snake)
+    agent = Agent(snake)
+    agent.get_vision(board)
+    agent.get_state()
+    max_session = int(sys.argv[1])
+    # loop(screen, clock, running, snake, agent, max_session)
+    train(snake, agent, max_session)
+    agent.save(f"{max_session}sess.json")
 
 
 if __name__ == "__main__":

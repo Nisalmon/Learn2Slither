@@ -1,5 +1,6 @@
 import random
 import json
+import pathlib
 
 
 class Agent:
@@ -16,15 +17,16 @@ class Agent:
         self.q_table = {}
         # Randomness
         self.epsilon = 1.0
-        self.learning_rate = 0.6
+        self.learning_rate = 1
         # Importancy of future rewards
-        self.gamma = 0.4
+        self.gamma = 0.7
         self.learning = True
         self.last_action = None
 
     def get_vision(self, board):
         x, y = self.snake.head
-        vision = [[' ' for _ in range(len(board[0]))] for _ in range(len(board))]
+        vision = [[' ' for _ in range(len(board[0]))]
+                  for _ in range(len(board))]
         for j in range(len(board)):
             for i in range(len(board[0])):
                 if x == i or y == j:
@@ -48,20 +50,24 @@ class Agent:
     def get_closest_object(self, x, y, dx, dy):
         x += dx
         y += dy
-
+        if (x < 0 or x >= len(self.vision[0])
+           or y < 0 or y >= len(self.vision)):
+            return "D"
         while (
             0 <= x < len(self.vision[0])
             and 0 <= y < len(self.vision)
         ):
             cell = self.vision[y][x]
 
-            if cell in ("S", "G", "R"):
+            if cell in ("G", "R"):
                 return cell
+            elif cell == "S":
+                return "D"
 
             x += dx
             y += dy
 
-        return "W"
+        return "0"
 
     def get_available_actions(self):
         actions = list(self.actions)
@@ -129,6 +135,12 @@ class Agent:
             target - current_q)
 
     def save(self, filename):
+        tree = filename.split("/")
+        files = None
+        if len(tree) > 1:
+            files = tree[:len(tree) - 1]
+        if files:
+            pathlib.Path("/".join(files)).mkdir(exist_ok=True, parents=True)
         data = {
             "epsilon": self.epsilon,
             "learning_rate": self.learning_rate,
@@ -144,7 +156,6 @@ class Agent:
 
         with open(filename, "w", encoding="utf-8") as file:
             json.dump(data, file, indent=4)
-
 
     def load(self, filename):
         with open(filename, "r", encoding="utf-8") as file:

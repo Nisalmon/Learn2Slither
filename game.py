@@ -2,7 +2,6 @@ import pygame as pg
 import random
 from agent import Agent
 import sys
-from tqdm import tqdm
 from parse_arg import parse
 
 
@@ -110,7 +109,7 @@ def stop_loop(event, running):
     return running
 
 
-def loop(screen, clock, running, snake, agent, max_session):
+def visu_loop(screen, clock, running, snake, agent, max_session):
     session = 1
     score = 0
     max_length = 0
@@ -159,6 +158,7 @@ def loop(screen, clock, running, snake, agent, max_session):
             score = 0
             max_length = 0
         pg.display.flip()
+        print(action_name)
         clock.tick(60)
     print(f"Model: {max_session} sessions")
     print("-" * 20)
@@ -289,7 +289,7 @@ board = init_board()
 CELL_SIZE = 48
 
 
-def train(snake, agent, max_session):
+def non_visu_loop(snake, agent, max_session):
     session = 1
     score = 0
     max_length = 0
@@ -298,7 +298,6 @@ def train(snake, agent, max_session):
     all_life = []
     moved = 0
     max_step = 300
-    pbar = tqdm(total=max_session)
     while session <= max_session:
         state = agent.state
         action_name = agent.choose_action()
@@ -335,8 +334,7 @@ def train(snake, agent, max_session):
             session += 1
             score = 0
             max_length = 0
-            pbar.update(1)
-    pbar.close()
+        print(action_name)
     print(f"Model: {max_session} sessions")
     print("-" * 20)
     print(f"Average length : {(sum(all_length)/len(all_length))}")
@@ -345,8 +343,139 @@ def train(snake, agent, max_session):
     print(f"Average life   : {(sum(all_life)/len(all_life))}")
 
 
+def check_pressed(events):
+    if events.type == pg.KEYDOWN:
+        if events.key == pg.K_KP_ENTER:
+            return True
+    return False
+
+
+def step_visu_loop(screen, clock, running, snake, agent, max_session):
+    session = 1
+    score = 0
+    max_length = 0
+    all_length = []
+    reached_10 = []
+    all_life = []
+    moved = 0
+    max_step = 300
+    enter_pressed = False
+    draw_grid(screen)
+    while running and session <= max_session:
+        events = pg.event.get()
+        screen.fill("gray")
+        for event in events:
+            enter_pressed = check_pressed(event)
+            running = stop_loop(event, running)
+        if not enter_pressed:
+            continue
+        state = agent.state
+        action_name = agent.choose_action()
+        action = agent.actions[action_name]
+        reward = snake.move(action)
+        update_board(snake)
+        moved += 1
+        if snake.alive:
+            agent.get_vision(board)
+            agent.get_state()
+            next_state = agent.state
+        else:
+            next_state = None
+        agent.update_q_value(
+            state, action_name,
+            reward, next_state
+        )
+        score += reward
+        max_length = max(max_length, len(snake.body) + 1)
+        if moved >= max_step:
+            reward = -3
+            snake.alive = False
+        draw_grid(screen)
+        if not snake.alive or snake.win:
+            all_length.append(max_length)
+            reached_10.append(1 if max_length >= 10 else 0)
+            all_life.append(moved)
+            snake = restart(agent)
+            agent.epsilon = max(0.01, agent.epsilon * 0.999)
+            agent.get_vision(board)
+            agent.get_state()
+            moved = 0
+            session += 1
+            score = 0
+            max_length = 0
+        pg.display.flip()
+        enter_pressed = False
+        print(action_name)
+        clock.tick(60)
+    print(f"Model: {max_session} sessions")
+    print("-" * 20)
+    print(f"Average length : {(sum(all_length)/len(all_length))}")
+    print(f"Max length     : {max(all_length)}")
+    print(f"Reach 10       : {sum(reached_10)}/{len(reached_10)}")
+    print(f"Average life   : {(sum(all_life)/len(all_life))}")
+    pg.quit()
+
+
+def step_non_visu_loop(snake, agent, max_session):
+    session = 1
+    score = 0
+    max_length = 0
+    all_length = []
+    reached_10 = []
+    all_life = []
+    moved = 0
+    max_step = 300
+    enter_pressed = ""
+    while session <= max_session:
+        while not enter_pressed:
+            enter_pressed = "a" + input()
+        state = agent.state
+        action_name = agent.choose_action()
+        action = agent.actions[action_name]
+        reward = snake.move(action)
+        update_board(snake)
+        moved += 1
+        if snake.alive:
+            agent.get_vision(board)
+            agent.get_state()
+            next_state = agent.state
+        else:
+            next_state = None
+        agent.update_q_value(
+            state, action_name,
+            reward, next_state
+        )
+        score += reward
+        max_length = max(max_length, len(snake.body) + 1)
+        if moved >= max_step:
+            reward = -3
+            snake.alive = False
+        if not snake.alive or snake.win:
+            all_length.append(max_length)
+            reached_10.append(1 if max_length >= 10 else 0)
+            all_life.append(moved)
+            snake = restart(agent)
+            agent.epsilon = max(0.01, agent.epsilon * 0.999)
+            agent.get_vision(board)
+            agent.get_state()
+            moved = 0
+            session += 1
+            score = 0
+            max_length = 0
+        print(action_name)
+        enter_pressed = ""
+    print(f"Model: {max_session} sessions")
+    print("-" * 20)
+    print(f"Average length : {(sum(all_length)/len(all_length))}")
+    print(f"Max length     : {max(all_length)}")
+    print(f"Reach 10       : {sum(reached_10)}/{len(reached_10)}")
+    print(f"Average life   : {(sum(all_life)/len(all_life))}")
+    pg.quit()
+
+
 def main():
     args = parse(sys.argv[1:-1])
+    print(args)
     setup_board()
     snake = setup_snake()
     agent = Agent(snake)
@@ -359,9 +488,15 @@ def main():
         agent.load(args.load)
     if args.visual == "on":
         screen, clock, running = setup()
-        loop(screen, clock, running, snake, agent, max_session)
+        if args.step_by_step:
+            step_visu_loop(screen, clock, running, snake, agent, max_session)
+        else:
+            visu_loop(screen, clock, running, snake, agent, max_session)
     else:
-        train(snake, agent, max_session)
+        if args.step_by_step:
+            step_non_visu_loop(snake, agent, max_session)
+        else:
+            non_visu_loop(snake, agent, max_session)
     if args.save:
         agent.save(args.save)
 
